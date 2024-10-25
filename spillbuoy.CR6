@@ -1,0 +1,1280 @@
+'CR1000 Series Datalogger
+'Date: 25-Oct/24
+'Program author:Seth Fleming-Alho Seth.Fleming-Alho@dfo-mpo.gc.ca
+'Contributors: Stephen Page, Hauke Blanken
+'COMU5: ADCP. Externally powered
+'ComC3: SatModem+ sat modem
+'blue on C3(Tx), yellow on C4(Rx), Red on 12V, Black on G
+
+' ADDED direction to weather string (11-Apr/21) 11Apr21a
+'  WeatherSBDstring = WeatherSBDstring&CHR(32)& heading &CHR(32)& Speed & &CHR(32) &Direction 'heading from AQD
+
+' ADDED error velocity string (11-Apr/21) 11Apr21b
+
+'COMU5:AquaDopp
+
+'Public dataString As String * 256
+''SerialOpen(COMU5,9600,0,0,1024,50)
+''
+'DataTable(AquaData,True, -1)
+'	DataInterval (0,1,Min,10)
+'	Sample(1, dataString, FP2)
+'EndTable
+'
+'
+'
+' NOTED ADCP and AquaDopp datatables were not being populated, so uncommented those
+'commands 19-Sep/24 SJP
+
+
+
+
+
+
+'ComC3: SatModem+
+'COM3: WCT536 met station. 19200, 8N1
+'COMU7: Rowe 300kHz ADCP
+'Public BT_1(5)', BT_1_avg
+
+'Declare Constants
+Const TxStringMaxLen = 420
+Dim serialInput As String * 400
+Const CRLF = CHR(13) + CHR(10)
+Const CR = CHR(13)
+Const LF = CHR(10)
+'Public BottomExtract1 As String * 69, BottomExtract2 As String * 69, BottomExtract3 As String * 69
+Public BottomTransmit As String * 340, ShortBottom As String * 69', BottomCombo As String *340
+Public SendWeather As Boolean
+
+Public Line1Parsed(20), Line1String As String * 100
+Public ErrorVelocityStr As String * 340
+'Declare Public Variables
+Public SJPtemp As String * 340, OutMessage As String * 340
+Public AquaDopp_OutString As String
+'Public AquaDopp_TableOutString As String * 150
+Public SatModem_signal
+Public SystemDateTime As String * 8
+Public PTemp, Batt_volt, StringNumber
+Public EnableModem As Boolean, BootUp As Boolean
+Dim SSDate As  String
+Public GotAQDdata As Boolean, GotADCPdata As Boolean
+Public SendNow As Boolean, SendFile2Now As Boolean, SendFileEVNow As Boolean
+Public Reset_MO_Number_Now As Boolean
+Dim i,j,k
+Public CheckSignal As Boolean, GetModemInfo As Boolean
+Public SBDS_MOFlag, SBDS_MOMSN, SBDS_MTFlag, SBDS_MTMSN
+Public SBDIX_MO_status, SBDIX_MOMSN, SBDIX_MT_status, SBDIX_MTMSN
+Public SBDIX_MT_length, SBDIX_MT_queued
+Public AquaDopp_Time As String',SystemTime As String
+Public SShour, SSmin,SSsec
+Public BinCount,RepCount,BENV
+Public SerialInString1 As String * 2604   'HCB changed from 5000 to 2600 09/25/2024
+Public SerialInString As String * 2604
+
+Public NBytes1 As Long, NBytes2 As Long, NBytes3 As Long
+Public ParseStr(356)
+Public TransmitPart1 As String * 340, TransmitPart2 As String * 340
+Public SendFile1 As String * 340, SendFile2 As String * 340
+Public ThreeDbins(32,5,5), CurrentBins(32,1,5), ThreeDbinAD(5,4)
+Public TempBins(32,1,25),NewAvgBins(32,1,5)'NewAvgBins(32,1,4) changed 13apr21
+Public TempBinsAD(1,20),AvgBinsAD(1,4)
+Public Bin_AvgStr(32) As String * 20
+Public ADSerialInString As String * 150
+Public InString As String * 150, WeatherSBDstring As String * 100 'HCB increased WeatherSBDstring length from 75 to 100 09/20/2024
+'Public send0R0_now As Boolean, ResetPrecipCOunter As Boolean
+'Public NBytesWeather,Counter,MetLength
+'Public BT_now(8), BT_five(5,8), BT_avg(8),TempBT(40),BT_stddev(8)
+'Public SendBTnow As Boolean
+'Public  WeatherParsed(11) As String, WeatherInString As String * 100
+
+''GPS STUFF
+Public check          As Long           'Number used to calculate checksum for data output
+Public NEMAcheck      As Float          'Check for number of bytes taken from GPS serial input
+Public GPScheck       As Boolean        'Check for valid GPS fix
+Public fullstring     As String * 64    'String for all data variables to be output
+'Public GPSNetwork     As Long
+Public GPSstring      As String * 64    'Recieved GPS serial string
+Public GPSlatraw      As String * 8     'GPS latitude input
+Public GPSlatmin      As Float          'GPS latitude minutes
+Public GPSlatdec      As Float          'GPS latitude decimal
+Public GPSlatdeg      As Float          'GPS latitude degrees
+Public GPSlongraw     As String * 8     'GPS longitude input
+Public GPSlonglength  As Float          'GPS longitude length, 3 or 2 digits
+Public GPSlongmin     As Float          'GPS longitude minutes
+Public GPSlongdec     As Float     'GPS longitude decimal
+Public GPSlongdeg     As Float          'GPS lingitude degrees
+Public GPStimeS       As String * 8     'GPS time string
+Public GPStimeL       As Long           'GPS time as a number
+Public GPSlatitude    As String * 8     'GPS latitude formatted for output
+Public GPSlongitude   As String * 9     'GPS longitude formatted for output
+Public GPSnumbers (3) As String         'Used to parse GLL string into numeric parts 4957.27, 12327.14 , 225444
+Public GPSletters (4) As String         'Used to Parse GLL srting into non-numeric parts N, W , A
+Public GPSSBDString As String * 150
+Public SendGPS As Boolean
+
+Alias Line1Parsed(8) = Heading_Rowe
+Alias Line1Parsed(9) = Pitch_Rowe
+Alias Line1Parsed(10) = Roll_Rowe
+Alias Line1Parsed(11) = Temp_Rowe
+
+Public BattV
+Public PTemp_C
+Public CVData(14)
+Public SlrTF_MJ
+Public CVMeta As String * 40
+Public WSPrev
+Public WindDirPrev
+Public MaxWSprev
+Public Invalid_Wind As Long
+
+Alias CVData(1)=SlrFD_W
+Alias CVData(2)=Rain_mm
+Alias CVData(3)=Strikes
+Alias CVData(4)=Dist_km
+Alias CVData(5)=WS_ms
+Alias CVData(6)=WindDir
+Alias CVData(7)=MaxWS_ms
+Alias CVData(8)=AirT_C
+Alias CVData(9)=VP_mbar
+Alias CVData(10)=BP_mbar
+Alias CVData(11)=RH
+Alias CVData(12)=RHT_C
+Alias CVData(13)=TiltNS_deg
+Alias CVData(14)=TiltWE_deg
+
+Units BattV=Volts
+Units PTemp_C=Deg C
+Units SlrTF_MJ=MJ/m^2
+Units SlrFD_W=W/m^2
+Units Rain_mm=mm
+Units Strikes=count
+Units Dist_km=kilometers
+Units WS_ms=meters/second
+Units WindDir=degrees
+Units MaxWS_ms=meters/second
+Units AirT_C=Deg C
+Units VP_mbar=mbar
+Units BP_mbar=mbar
+Units RH=%
+Units RHT_C=Deg C
+Units TiltNS_deg=degrees
+Units TiltWE_deg=degrees
+
+
+'Alias BT_now(1) = Beam1Range
+'Alias BT_now(2) = Beam2Range
+'Alias BT_now(3) = Beam3Range
+'Alias BT_now(4) = Beam4Range
+'Alias BT_now(5) = SNR1
+'Alias BT_now(6) = SNR2
+'Alias BT_now(7) = SNR3
+'Alias BT_now(8) = SNR4
+
+
+Public ParseStrAD(25)
+Alias ParseStrAD(1) = month
+Alias ParseStrAD(2) = dayofmonth
+Alias ParseStrAD(3) = year
+Alias ParseStrAD(4) = hour
+Alias ParseStrAD(5) = minute
+Alias ParseStrAD(6) = seconds
+Alias ParseStrAD(7) = ErrorCode
+Alias ParseStrAD(8) = StatusCode
+Alias ParseStrAD(9) = E
+Alias ParseStrAD(10) = N
+Alias ParseStrAD(11) = Up
+Alias ParseStrAD(12) = AmplBeam1
+Alias ParseStrAD(13) = AmplBeam2
+Alias ParseStrAD(14) = AmplBeam3
+Alias ParseStrAD(15) = ADBattVolt
+Alias ParseStrAD(16) = SoundSpd
+Alias ParseStrAD(17) = heading
+Alias ParseStrAD(18) = pitch
+Alias ParseStrAD(19) = roll
+Alias ParseStrAD(20) = Pressure
+Alias ParseStrAD(21) = Temp
+Alias ParseStrAD(22) = Analog1
+Alias ParseStrAD(23) = Analog2
+Alias ParseStrAD(24) = Speed
+Alias ParseStrAD(25) = Direction
+
+'SATELLITE VARIABLES
+Public SatModem_message_out As String * 340 'message to send
+Public SatModem_message_in As String * 270 'message recieved
+Dim SBDSArray(4) As String
+Dim SBDIXArray(6) As String
+Public SatModem_ID As String * 50
+Public SatModem_IMEI As String
+Public SatModem_firmware(7) As String * 50
+Dim SendFile1temp As String * 50', SendFile2temp As String  * 50
+Dim WeatherDataTabletemp As String  * 50
+
+' Const SatModem_COM_PORT = ComC1      'Serial com port
+Const SatModem_SBDIX_retry = 5   'Number of retries to connect to satellites
+' (~20 sec/retry)
+Const SatModem_SW_power = false      'SW12_1, SW12_2 or false (12V)
+Const SatModem_outbox_size = 1000    'Number of messages in outbox table
+Const SatModem_inbox_size = 100      'Number of messages in inbox table
+
+
+'Data Tables
+' Outbox - messages to be sent (every 30min ensembles)
+' ADCP_Data: all ensembles
+'411: diagnostic data (Panel temp, batt volt etc)
+DataTable (Battery_Table,1,-1) '~ 4 months of battery data
+  CardOut(0,10000) '~ 6+ months
+  DataInterval (0,30,Min,10)
+  Sample (1,Batt_volt,FP2)
+  Sample (1,PTemp,FP2)
+EndTable
+
+'GPS Data
+DataTable(GPSData,True,-1)            'Define data table to store internally
+	DataInterval(0,5,sec,0)          '5 second update rate
+	Sample(1,GPSlatitude,String)     'Store raw value in degree minutes decimal
+	Sample(1,GPSlongitude,String)    'Store raw value in degree minutes decimal
+EndTable
+
+
+DataTable (WeatherDataTable,1,-1) 'Set table size to # of records, or -1 to autoallocate.
+	'DataInterval(0,2,Min,10)
+	Totalize(1,Rain_mm,FP2,False)
+	Totalize(1,Strikes,FP2,False)
+	Average(1,WS_ms,FP2,False)
+	Sample(1,WindDir,FP2)
+	Average(1,AirT_C,FP2,False)
+	Average(1,VP_mbar,IEEE4,False)
+	Average(1,BP_mbar,IEEE4,False)
+	Average(1,SlrFD_W,FP2,False)    'added by HCB 09/20/2024
+	Average(1,RH,FP2,False)         'added by HCB 09/20/2024
+EndTable
+
+DataTable (SBD_Transmissions,1,-1) '~ 4 months of battery data
+  CardOut(0,14000) '~ 6+ months
+  DataTime (1)
+  Sample (1,SBDS_MOMSN,Long)
+  Sample (1,StringNumber,Long)
+  Sample (1,SatModem_signal,Long)
+  Sample (1,SBDIX_MO_status,Long)
+EndTable
+
+
+DataTable (TransmissionTable,1,48) '
+  'Sample (1,SendFile1,String)
+	Sample (1,AirT_C,String)
+	Sample (1,WindDir,String)
+	Sample (1,WS_ms,String)
+	Sample (1,BP_mbar,String)
+	'Sample (1,WeatherDataTable,String)
+	'Sample (1,WeatherSBDstring,String)
+	Sample (1,WeatherDataTabletemp,IEEE8)
+
+
+  Sample (1,SendFile1,String)
+  Sample (1,SendFile2,String)
+  
+    Sample (1,ErrorVelocityStr,String)
+    Sample (1,BottomTransmit,String)
+  CardOut(0,14000) '2/hour, 48/day 1460/month, 8800/6 months
+  'TableFile ("USB:Battery_Table_",8,-1,0,0,Hr,Outstat,LastFileName)
+EndTable
+
+
+DataTable ( ADCP_table,1,-1) '1min data
+  CardOut(0,-1)
+  Sample (160,CurrentBins(),Long)
+
+  
+EndTable
+
+DataTable ( inString_table,1,100) '1min data
+  'CardOut(0,-1)
+  Sample (1,SerialInString1,String)
+  Sample (1,SerialInString,String)
+  Sample (356,ParseStr(),FP2)
+EndTable
+
+
+'DataTable ( BottomTracking,1,-1) '1min data
+'  CardOut(0,-1)
+'  Sample (8,BT_now(),Long)
+' EndTable
+
+
+DataTable (AquaDopp_Table,1,-1) '1min data
+  CardOut(0,-1)
+  Sample (25,ParseStrAD(),FP2)
+EndTable
+
+
+DataTable (SatModem_outbox,1,SatModem_outbox_size)
+  DataTime(1)
+  Sample (1,OutMessage,String)
+  Sample (1,SBDIX_MOMSN,String)
+    CardOut(0,14000)
+EndTable
+
+DataTable (SatModem_inbox,1,SatModem_inbox_size)
+  DataTime(1)
+  Sample (1,SatModem_message_in,String)
+  Sample (1,SBDIX_MTMSN,String)
+EndTable
+
+DataTable (SatSignal,True,1000 )'2/hour, 48/day 1460/month, 8800/6 months
+  DataTime (1)
+  CardOut(0,14000)
+  Sample 1,SatModem_signal,Long
+EndTable
+
+DataTable (ModemInfo,True,60 )
+  DataTime (1)
+  Sample 1,SatModem_ID,String
+  Sample 1,SatModem_IMEI,String
+  Sample 1,SatModem_signal,Long
+  Sample 7,SatModem_firmware(),String
+EndTable
+
+'DataTable (StatusUpdate,True,-1 ) '2/hour, 48/day 1460/month, 8800/6 months
+'  CardOut(0,9000)
+'  Sample 1,SBDS_MOFlag,String
+'  Sample 1,SBDS_MOMSN,String
+'EndTable
+
+
+
+'Define Subroutines
+'Sub GetSignal
+'  SerialOut(ComC3,"AT"+CHR(13),"OK",1,10)
+'  SerialOut(ComC3,"AT&K0"+CHR(13),"OK",1,10)' turns off flow control
+'  SerialOut(ComC3,"AT+CSQ"+CHR(13),"",1,10)
+'EndSub
+
+Function Send_ATcommand(AT_cmd As String)
+  SerialFlush(ComC3)
+  SerialOut(ComC3, AT_cmd + CR, CR, 3, 20)
+  SerialIn(serialInput,ComC3, 20, -1, 400)
+EndFunction
+
+Function SatModem_GetIMEI() As Boolean
+  Send_ATcommand("AT+CGSN")
+  SplitStr (SatModem_IMEI,serialInput, CR, 1, 6)
+  ' Return Serial_OK(serialInput)
+EndFunction
+
+'Get signal quality
+Function SatModem_SignalQuality() As Boolean
+  Send_ATcommand("AT+CSQF")
+  SplitStr (SatModem_signal,serialInput, "", 1, 10)
+  'Return Serial_OK(serialInput)
+End Function
+
+'Get Firmware Version
+Function SatModem_firmwareVersion() As Boolean
+  Send_ATcommand("AT+CGMR")
+  SplitStr(SatModem_firmware(), serialInput, CRLF, 7, 6)
+  ' Return Serial_OK(serialInput)
+End Function
+
+Function Serial_OK(serialInput As String * 400) As Boolean
+  If InStr (1,serialInput,"OK",2) > 0 Then
+    Return true
+  Else
+    Return false
+  EndIf
+EndFunction
+
+'Send ASCII data
+Function SatModem_SendASCII(SatModem_message_out As String * 340) As Boolean
+  Send_ATcommand("AT+SBDWT") 'Send data
+  OutMessage = SatModem_message_out
+  If InStr (1,serialInput,"READY",2) > 0 Then
+    SerialOut(ComC3, SatModem_message_out + CRLF, CRLF, 3, 20)
+  EndIf
+  SerialIn(serialInput,ComC3, 20, -1, 400)
+  Return Serial_OK(serialInput)
+EndFunction
+
+'Check SBD status
+Function SatModem_status() As Boolean
+  Send_ATcommand("AT+SBDS") 'MT buffer status
+  SplitStr(SBDSArray(), serialInput, "", 4, 10) 'Parse message
+  SBDS_MOFlag = SBDSArray(1) '0) No MO message waiting; 1) MO message in buffer
+  SBDS_MOMSN = SBDSArray(2)  'MO Sequence Number
+  SBDS_MTFlag = SBDSArray(3) '0) No TO message waiting; 1) MT message in buffer
+  SBDS_MTMSN = SBDSArray(4)  'MT Sequence Number
+
+  Return Serial_OK(serialInput)
+EndFunction
+
+'Initiate SBD session
+Function SatModem_SBDsession() As Boolean
+  Dim i
+  For i = 1 To SatModem_SBDIX_retry
+    SerialFlush(ComC3)
+    SerialOut(ComC3, "AT+SBDIX" + CRLF, CRLF, 3, 20)
+    Delay (1,20,Sec) 'wait for satellite connection
+    SerialIn(serialInput,ComC3, 20, -1, 400)
+    SplitStr(SBDIXArray(), serialInput, "", 6, 10)
+    SBDIX_MO_status = SBDIXArray(1) '0-2) Message sent; 5-65) Error
+    SBDIX_MOMSN = SBDIXArray(2)     'MO Sequence Number
+    SBDIX_MT_status = SBDIXArray(3) '0) Nothing to receive;
+    '1) Message received; 2) Error
+    SBDIX_MTMSN = SBDIXArray(4)     'MT Sequence Number
+    SBDIX_MT_length = SBDIXArray(5) 'Length of MT message
+    SBDIX_MT_queued = SBDIXArray(6) 'MT messages in queue
+    If SBDIX_MO_status < 5 Then ExitFor 'Exit for-loop if connection is established
+  Next i
+  If Serial_OK(serialInput) AND SBDIX_MO_status < 5 Then
+    If Len(SatModem_message_out) > 0
+      CallTable SatModem_outbox
+    EndIf
+    Return true
+  Else
+    Return false
+  EndIf
+EndFunction
+
+'Clear MO buffer
+Function SatModem_clrMObuffer() As Boolean
+  Send_ATcommand("AT+SBDD0") 'Clear MO buffer
+  SJPtemp = SatModem_message_out
+  SatModem_message_out = "" 'clear
+  Return Serial_OK(serialInput)
+EndFunction
+
+'Receive MT message (not using for Zuciarte)
+Function SatModem_receive() As Boolean
+  Send_ATcommand("AT+SBDRT")
+  SatModem_message_in = Mid (serialInput,12,SBDIX_MT_length)
+  If Serial_OK(serialInput) Then
+    CallTable SatModem_inbox
+    Return true
+  Else
+    Return false
+  EndIf
+EndFunction
+
+Function SatModem_ResetMOnumber() As Boolean
+  Send_ATcommand("AT+SBDC") 'Reset the incremental MO number (new deployment)
+  SatModem_message_out = "" '
+  Return Serial_OK(serialInput)
+EndFunction
+
+
+
+'Define Subroutines
+
+'EndSub
+
+'Main Program
+SequentialMode
+
+
+BeginProg
+  SerialOpen(COMU5,9600,0,0,400) ' AquaDopp (AQD DW) port
+  SerialOpen(ComC3,19200,0,0,400) ' SatModem+ port
+  'SerialOpen(Com3,19200,0,0,400) ' WXT536 weather station port
+  SerialOpen(COMU3,9600,0,0,10000) 'ADCP (Rowe) por
+  SerialOpen (COMU7,4800,0,0,512)   'Open a serial port for GPS input Data output
+  SerialFlush (COMU5)
+
+
+  Move (TempBins(),12,NAN,1)
+  Move (ThreeDbins(),800,NAN,1) '(32x5x4=640, 32x5x5=800)
+  Move (TempBinsAD(),20,NAN,1)
+  Move (ThreeDbinAD(),20,NAN,1)
+'  Move (BT_five(),40,NAN,1) 'added 31-Apr-21
+
+  SatModem_GetIMEI()
+  SatModem_SignalQuality()
+  SatModem_firmwareVersion()
+
+  Send_ATcommand("AT+CGMM")
+  SplitStr (SatModem_ID,serialInput, CRLF, 1, 6)
+  EnableModem = true
+  SendNow = false
+  BootUp = true
+  SendFile2Now = false
+  
+
+
+  Scan (5,Sec,0,0)
+
+    If BootUp Then
+      CallTable ModemInfo
+      CallTable SatSignal
+      BootUp = false
+    EndIf
+
+    If Reset_MO_Number_Now Then
+      SatModem_ResetMOnumber()
+    EndIf
+
+
+
+
+
+    'going to try linefeed as start ( ) and carriage return as end)
+    'SerialInRecord (COMU3,Line1String,&H0C,0,&H0D,NBytes1,01) 'read in header
+    'SerialFlush (COMU3)
+    
+    'SerialInString = ""
+    SerialInRecord (COMU3,SerialInString1,&H4269,2604,0,NBytes2,01) 'read in all data (HCB idecreased length from 5000 to 2600 09/25/2024)
+    SerialInString = Replace (SerialInString1,"--","00")
+    'SplitStr (Line1Parsed(),Line1String,CHR(32),20,0)
+    'CHR 32 is a space. 09 = tab 'I think is 12 for begin word
+    SplitStr (ParseStr(),SerialInString,CHR(32),356,0)
+    CallTable inString_table
+    
+    PanelTemp (PTemp,60)
+    Battery (Batt_volt)
+'If IfTime (3,5,Min) Then
+'  BottomExtract1 = ShortBottom
+'      SSDate=Status.TimeStamp(3,1)
+'    SShour = Mid (SSDate,12,2)
+'    SSmin=Mid (SSDate,15,2)
+'    SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+'    BottomExtract1 =SystemDateTime& CHR(32) & "T" & CHR(32) & BottomExtract1
+'  EndIf
+'  
+'If IfTime (4,5,Min) Then
+'  BottomExtract2 = ShortBottom
+'        SSDate=Status.TimeStamp(3,1)
+'    SShour = Mid (SSDate,12,2)
+'    SSmin=Mid (SSDate,15,2)
+'    SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+'    BottomExtract2 =SystemDateTime & CHR(32) & BottomExtract2
+'  EndIf
+'  
+'If IfTime (0,5,Min) Then
+'  BottomExtract3 = ShortBottom
+'          SSDate=Status.TimeStamp(3,1)
+'    SShour = Mid (SSDate,12,2)
+'    SSmin=Mid (SSDate,15,2)
+'    SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+'    BottomExtract3 =SystemDateTime & CHR(32) & BottomExtract3
+'    BottomCombo = BottomExtract1 & CHR(32) & BottomExtract2 & CHR(32) & BottomExtract3
+'  
+'  EndIf
+'If IfTime (0,30,min) Then
+'BottomTransmit = BottomCombo
+'EndIf
+
+
+
+    If NBytes2 > 0 Then ' data back from ADCP loop
+        ShortBottom = Right(SerialInString,69)
+'bottom string development
+
+
+
+
+
+
+
+
+      'shuffle the average bins for the moving avg calc
+      For BinCount = 1 To 32 Step 1
+        'change rep from 4 to 5 for Error Velocity
+        Move (ThreeDbins(BinCount,5,1),5,ThreeDbins(BinCount,4,1),5)
+        Move (ThreeDbins(BinCount,4,1),5,ThreeDbins(BinCount,3,1),5)
+        Move (ThreeDbins(BinCount,3,1),5,ThreeDbins(BinCount,2,1),5)
+        Move (ThreeDbins(BinCount,2,1),5,ThreeDbins(BinCount,1,1),5)
+      Next BinCount
+
+
+'        Move (BT_five(5,1),8,BT_five(4,1),8)
+'        Move (BT_five(4,1),8,BT_five(3,1),8)
+'        Move (BT_five(3,1),8,BT_five(2,1),8)
+'        Move (BT_five(2,1),8,BT_five(1,1),8)
+
+
+
+
+      For BinCount = 1 To 32 Step 1
+
+        ThreeDbins(BinCount,1,1)=ParseStr((BinCount-1)*11+1+4)
+        ThreeDbins(BinCount,1,2)=ParseStr((BinCount-1)*11+4+4)
+        ThreeDbins(BinCount,1,3)=ParseStr((BinCount-1)*11+5+4)
+        ThreeDbins(BinCount,1,4)=ParseStr((BinCount-1)*11+6+4)
+        ThreeDbins(BinCount,1,5)=ParseStr((BinCount-1)*11+7+4)
+      Next BinCount
+      'ThreeDbins(31,1,2)=ParseStr(545) ' bottom velocities
+      'ThreeDbins(31,1,3)=ParseStr(546)
+      'ThreeDbins(31,1,4)=ParseStr(547)
+      'ThreeDbins(31,1,5)=ParseStr(548) 'added 13apr21
+      'ThreeDbins(32,1,1)=ParseStr(557) 'bottom depths
+      'ThreeDbins(32,1,2)=ParseStr(558)
+      'ThreeDbins(32,1,3)=ParseStr(559)
+      'ThreeDbins(32,1,4)=ParseStr(560)
+ 
+'-----------------BT STUFF
+
+'added 13-apr-21  bottom track depth(1-4) and SNR   (5-8)
+'BT_now(1) = ParseStr(557)
+'BT_now(2) = ParseStr(558)
+'BT_now(3) = ParseStr(559)
+'BT_now(4) = ParseStr(560)
+'BT_now(5) = ParseStr(561)
+'BT_now(6) = ParseStr(562)
+'BT_now(7) = ParseStr(563)
+'BT_now(8) = ParseStr(564)
+'Move (BT_five(1,1),8,BT_now(1),8)
+
+'calc avg BT and SNR
+ '   AvgSpa(BT_avg(),5,BT_five())
+'        For j = 1 To 40 Step 1
+'          If j <9  Then
+'            k = 1
+'          ElseIf j <17 Then
+'            k=2
+'          ElseIf j <25 Then
+'            k=3
+'          ElseIf j <233 Then
+'            k=4
+'            Else
+'              k=5
+'          EndIf
+'
+'          If j = 1 OR j =9  OR j=17 OR j=25 OR j=33 Then
+'            i=1
+'          ElseIf  j = 2 OR j=10 OR j=18 OR j=26 OR j=34 Then
+'            i=2
+'          ElseIf j =3 OR j=11 OR j=19 OR j=27 OR j=35 Then
+'            i=3
+'          ElseIf j=4 OR j=12 OR j=20 OR j=28 OR j=36 Then
+'            i=4
+'          ElseIf j=5 OR j=13 OR j=21 OR j=29 OR j=37 Then
+'            i=5
+'          ElseIf j=6 OR j=14 OR j=22 OR j=30 OR j=38 Then
+'           i=6
+'          ElseIf j=7 OR j=15 OR j=23 OR j=31 OR j=39 Then
+'            i=7
+'          Else
+'            i=8
+'          EndIf
+
+          '     If j <= 12 Then BT_five(1,1
+'          TempBT(j) = BT_five(i,k)
+          '      EndIf
+'        Next j
+
+
+
+'        AvgSpa(BT_avg(1),5,TempBT(1))
+'        AvgSpa(BT_avg(2),5,TempBT(6))
+'        AvgSpa(BT_avg(3),5,TempBT(11))
+'        AvgSpa(BT_avg(4),5,TempBT(16))
+'        AvgSpa(BT_avg(5),5,TempBT(21))
+'        AvgSpa(BT_avg(6),5,TempBT(26))
+'        AvgSpa(BT_avg(7),5,TempBT(31))
+'        AvgSpa(BT_avg(8),5,TempBT(36))
+
+'        StdDevSpa(BT_stddev(1),5,TempBT(1))
+'        StdDevSpa(BT_stddev(2),5,TempBT(6))
+'        StdDevSpa(BT_stddev(3),5,TempBT(1))
+'        StdDevSpa(BT_stddev(4),5,TempBT(16))
+'        StdDevSpa(BT_stddev(5),5,TempBT(21))
+'        StdDevSpa(BT_stddev(6),5,TempBT(26))
+'        StdDevSpa(BT_stddev(7),5,TempBT(31))
+'        StdDevSpa(BT_stddev(8),5,TempBT(36))
+        
+
+'-----------END OF BOTTOM TRACK CALCS---------------
+
+
+      For BinCount = 1 To 32 Step 1
+        CurrentBins(BinCount,1,1) =  ThreeDbins(BinCount,1,1)
+        CurrentBins(BinCount,1,2) =  ThreeDbins(BinCount,1,2)
+        CurrentBins(BinCount,1,3) =  ThreeDbins(BinCount,1,3)
+        CurrentBins(BinCount,1,4) =  ThreeDbins(BinCount,1,4)
+        CurrentBins(BinCount,1,5) =  ThreeDbins(BinCount,1,5) 'added 13apr21
+      Next BinCount
+
+
+      'temporarily commenting out this section for testing only.
+      'enable for deployment!
+      'replace 88888 with NaN for averaging
+      For BinCount = 1 To 32 Step 1
+        For RepCount = 1 To 3 Step 1
+          For BENV = 1 To 4 Step 1
+            If ThreeDbins(BinCount,RepCount,BENV) = -32768 Then 
+            ThreeDbins(BinCount,RepCount,BENV) = NaN
+            EndIf
+            Next BENV
+            Next RepCount
+            Next BinCount
+
+      For BinCount = 1 To 32 Step 1
+        For j = 1 To 25 Step 1
+          If j <6  Then
+            k = 1
+          ElseIf j <11 Then
+            k=2
+          ElseIf j <16 Then
+            k=3
+          ElseIf j <21 Then
+            k=4
+          Else
+            k=5
+          EndIf
+
+          If j = 1 OR j =6  OR j=11 OR j=16 OR j=21 Then
+            i=1
+          ElseIf  j = 2 OR j=7 OR j=12 OR j=17 OR j=22 Then
+            i=2
+          ElseIf j =3 OR j=8 OR j=13 OR j=18 OR j=23 Then
+            i=3
+          ElseIf j=4 OR j=9 OR j=14 OR j=19 OR j=24 Then
+            i=4
+          Else
+            i=5
+          EndIf
+
+         TempBins(BinCount,1,j) = ThreeDbins(BinCount,i,k) 
+        Next j
+      Next BinCount
+
+'calc running avg for ADCP bins
+      For BinCount = 1 To 32 Step 1
+        AvgSpa(NewAvgBins(BinCount,1,1),5,TempBins(BinCount,1,1))
+        AvgSpa(NewAvgBins(BinCount,1,2),5,TempBins(BinCount,1,6))
+        AvgSpa(NewAvgBins(BinCount,1,3),5,TempBins(BinCount,1,11))
+        AvgSpa(NewAvgBins(BinCount,1,4),5,TempBins(BinCount,1,16))
+        AvgSpa(NewAvgBins(BinCount,1,5),5,TempBins(BinCount,1,21))
+      Next BinCount
+'BT_1(1) = Left(TempBins(32,1,1),6)
+'BT_1(2) = Left(TempBins(32,1,2),6)
+'BT_1(3) = Left(TempBins(32,1,3),6)
+'BT_1(4) = Left(TempBins(32,1,4),6)
+'BT_1(5) = Left(TempBins(32,1,5),6)
+'AvgSpa (BT_1_avg,5,BT_1)
+
+      'average output bins
+      For BinCount = 1 To 32 Step 1
+        Bin_AvgStr(BinCount) = Round(NewAvgBins(BinCount,1,1),0)&CHR(32)&Round(NewAvgBins(BinCount,1,2),0)&CHR(32)&Round(NewAvgBins(BinCount,1,3),0)&CHR(32)&Round(NewAvgBins(BinCount,1,4),0)
+      Next BinCount
+ 
+    SSDate=Status.TimeStamp(3,1)
+    SShour = Mid (SSDate,12,2)
+    SSmin=Mid (SSDate,15,2)
+    ' SSsec=Mid (SSDate,18,2)
+    SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+    
+ErrorVelocityStr=SystemDateTime &CHR(32)& "E"  &  CHR(32) & Round(heading,0)' & BT_avg(1)
+'     For BinCount = 2 To 8 Step 1
+'        ErrorVelocityStr = ErrorVelocityStr &CHR(32)& BT_avg(BinCount)
+'      Next BinCount
+'      
+'    For BinCount = 1 To 8 Step 1
+'        ErrorVelocityStr = ErrorVelocityStr &CHR(32)& BT_stddev(BinCount)
+'      Next BinCount
+
+      For BinCount = 1 To 32 Step 1
+        ErrorVelocityStr = ErrorVelocityStr &CHR(32)&Round(NewAvgBins(BinCount,1,5),0)
+      Next BinCount
+'CallTable BottomTracking
+
+      'Bin_AvgStr(31) = "B"&CHR(32)&Round(NewAvgBins(31,1,2),0)&CHR(32)&Round(NewAvgBins(31,1,3),0)&CHR(32)&Round(NewAvgBins(31,1,4),0)
+      'Bin_AvgStr(32) = Round(NewAvgBins(32,1,1),0)&CHR(32)&Round(NewAvgBins(32,1,2),0)&CHR(32)&Round(NewAvgBins(32,1,3),0)&CHR(32)&Round(NewAvgBins(32,1,4),0)
+      GotADCPdata = true
+     CallTable ADCP_table 'SJP uncommented this 19-Sep/24
+    Else
+      GotADCPdata = false
+    EndIf ' end of ADCP loop
+
+   ' ----start of AquaDopp recording
+'    Scan(1,sec,0,0)
+'      SerialInRecord(COMU5, dataString,00,256,00,NBytes3,01)
+      CallTable AquaDopp_Table 'SJP uncommented this 19-Sep/24
+'    NextScan
+
+
+
+      SerialInRecord (COMU5,ADSerialInString,&H0A,0,&H0D,NBytes3,01) 'read in all data
+     'SerialInRecord (COMU5,ADSerialInString,LF,0,CR,NBytes3,01) 'read in all data
+
+
+    If NBytes3 > 0 Then
+      SplitStr (ParseStrAD(),ADSerialInString,CHR(32),25,0)
+      InString = ADSerialInString
+      SSDate=Status.TimeStamp(3,1)
+      SShour = Mid (SSDate,12,2)
+      SSmin=Mid (SSDate,15,2)
+      SSsec=Mid (SSDate,18,2)
+      If SSsec >=30 Then SSmin = SSmin+1
+      AquaDopp_Time = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&SShour&SSmin)
+
+      Move (ThreeDbinAD(5,1),4,ThreeDbinAD(4,1),4)
+      Move (ThreeDbinAD(4,1),4,ThreeDbinAD(3,1),4)
+      Move (ThreeDbinAD(3,1),4,ThreeDbinAD(2,1),4)
+      Move (ThreeDbinAD(2,1),4,ThreeDbinAD(1,1),4)
+
+
+      ThreeDbinAD(1,2)=Round(E*1000,0)
+      ThreeDbinAD(1,3)=Round(N*1000,0)
+      ThreeDbinAD(1,4)=Round(Temp,1)
+
+      For BinCount = 1 To 1 Step 1
+        For j = 1 To 20 Step 1
+
+          If j <6  Then
+            k = 1
+          ElseIf j <11 Then
+            k=2
+          ElseIf j <16 Then
+            k=3
+          Else
+            k=4
+          EndIf
+
+          If j = 1 OR j =6  OR j=11 OR j=16 Then
+            i=1
+          ElseIf  j = 2 OR j=7 OR j=12 OR j=17 Then
+            i=2
+          ElseIf j =3 OR j=8 OR j=13 OR j=18 Then
+            i=3
+          ElseIf j=4 OR j=9 OR j=14 OR j=19 Then
+            i=4
+          Else
+            i=5
+          EndIf
+
+          '     If j <= 12 Then
+
+          TempBinsAD(1,j) = ThreeDbinAD(i,k)
+          '      EndIf
+        Next j
+      Next BinCount
+
+      AvgSpa(AvgBinsAD(1,1),5,TempBinsAD(1,1))
+      AvgSpa(AvgBinsAD(1,2),5,TempBinsAD(1,6))
+      AvgSpa(AvgBinsAD(1,3),5,TempBinsAD(1,11))
+      AvgSpa(AvgBinsAD(1,4),5,TempBinsAD(1,16))
+
+
+
+      ' SerialFlush (COMU5)
+      '  NBytes3 = 0
+      CallTable AquaDopp_Table
+      GotAQDdata = true
+    Else
+      GotAQDdata = false
+    EndIf
+
+        'AquaDopp_TableOutString = Round(E*1000,0)& " " & Round(N*1000,0) & " " & Round(Temp,1)
+    AquaDopp_OutString ="n" & " " & Round(AvgBinsAD(1,2),0)& " " & Round(AvgBinsAD(1,3),0) & " " & Round(AvgBinsAD(1,4),1)
+
+    SSDate=Status.TimeStamp(3,1)
+    SShour = Mid (SSDate,12,2)
+    SSmin=Mid (SSDate,15,2)
+    ' SSsec=Mid (SSDate,18,2)
+    SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+
+    TransmitPart1 = SystemDateTime&chr(32)&"S" &CHR(32)&AquaDopp_OutString
+    'TransmitPart1 = SystemDateTime&chr(32)&"S" &CHR(32)&AquaDopp_TableOutString
+    For BinCount = 1 To 16 Step 1
+      TransmitPart1 = TransmitPart1&CHR(32)&Bin_AvgStr(BinCount)
+    Next BinCount
+
+    TransmitPart2 = SystemDateTime
+    'or BinCount = 17 To 32 Step 1 dropped bin 32 14-apr-21
+    For BinCount = 17 To 32 Step 1
+      TransmitPart2 =TransmitPart2&CHR(32)&Bin_AvgStr(BinCount)
+    Next BinCount
+    'TransmitPart2 =TransmitPart2&CHR(32)'& Round(Batt_volt,1)
+    CallTable Battery_Table
+
+'    '********************weather data capture
+'    If send0R0_now Then
+'      SerialOut (Com3,"0R0"+CRLF,"",0,0)
+'      send0R0_now = false
+'    EndIf
+'
+'    If TimeIntoInterval (0,24,Hr) Then 'reset rain accumulator
+'      SerialOut (Com3,"0XZRU"+CRLF,"",0,0)
+'    EndIf
+'
+'    If send0R0_now Then
+'      SerialOut (Com3,"0R0"+CRLF,"",0,0)
+'      send0R0_now = false
+'    EndIf
+'
+'    If ResetPrecipCOunter Then 'reset rain accumulator
+'      SerialOut (Com3,"0XZRU"+CRLF,"",0,0)
+'      ResetPrecipCOunter = false
+'    EndIf
+
+    '----------------------------------------------------------------Weather
+    '********************weather data capture
+		'    If send0R0_now Then
+		'      SerialOut (ComC1,"0R0"+CRLF,"",0,0)
+		'      send0R0_now = false
+		'    EndIf
+		'
+		'    If TimeIntoInterval (0,24,Hr) Then 'reset rain accumulator
+		'      SerialOut (ComC1,"0XZRU"+CRLF,"",0,0)
+		'    EndIf
+		'
+		'    If send0R0_now Then
+		'      SerialOut (ComC1,"0R0"+CRLF,"",0,0)
+		'      send0R0_now = false
+		'    EndIf
+		'
+		'    If ResetPrecipCOunter Then 'reset rain accumulator
+		'      SerialOut (ComC1,"0XZRU"+CRLF,"",0,0)
+		'      ResetPrecipCOunter = false
+		'    EndIf
+		'
+		'    SerialInRecord (ComC1,WeatherInString,LF,0,CR,NBytesWeather,01) 'read in all
+		'
+		'    If     NBytesWeather > 18 Then
+		'      SplitStr (WeatherParsed(),WeatherInString,CHR(44),11,5)
+		'      For Counter = 2 To 11 Step 1
+		'        MetLength = Len(WeatherParsed(Counter))
+		'        WeatherParsed(Counter) = Right( WeatherParsed(Counter), MetLength-3)
+		'        MetLength = Len(WeatherParsed(Counter))
+		'        WeatherParsed(Counter) = Left( WeatherParsed(Counter), MetLength-1)
+		'      Next BinCount
+		'      MetLength = Len(WeatherParsed(11))
+		'      WeatherParsed(11) = Left( WeatherParsed(11), MetLength-2)
+		'
+		'      SSDate=Status.TimeStamp(3,1)
+		'      SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+		'
+		'WeatherSBDstring = SystemDateTime&CHR(32)&"W"&CHR(32)&WeatherParsed(3) 'avg wind direction
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)&WeatherParsed(6) 'avg wind speed
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)&WeatherParsed(7) 'max wind speed
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)&WeatherParsed(8) 'temp
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)&WeatherParsed(9) 'humidity
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)&WeatherParsed(10) 'press
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)&WeatherParsed(11) 'rain
+		'      WeatherSBDstring = WeatherSBDstring&CHR(32)& heading &CHR(32)& Speed & CHR(32) &Direction & CHR(32) &BT_1(1) 'heading from AQD
+		'Default CR1000X Datalogger Battery Voltage measurement 'BattV'
+		Battery(BattV)
+		'Default CR1000X Datalogger Wiring Panel Temperature measurement 'PTemp_C'
+		PanelTemp(PTemp_C,60)
+		'Get ClimaVUE50 Compact Digital Weather Sensor metadata 'CVMeta' every day at midnight in case sensor is swapped or OS is updated
+		If IfTime(0,1,Day) Then
+			SDI12Recorder(CVMeta,C1,"0","I!",1,0)
+		EndIf
+
+		'ClimaVUE50 Compact Digital Weather Sensor measurements
+		'SlrFD_W', 'Rain_mm', 'Strikes', 'Dist_km', 'WS_ms', 'WindDir',
+		'MaxWS_ms', 'AirT_C', 'VP_mbar', BP_mbar', 'RH', 'RHT_C',
+		'TiltNS_deg', and 'TiltWE_deg'
+		'The datalogger program execution rate (scan rate) is less than ten seconds. The ClimaVUE50 Compact Digital Weather Sensor requires ten seconds to respond with
+		'measurements. The following SDI12Recorder instruction will only be executed/measured every ten seconds because of the 'If TimeIntoInterval' block surrounding it.
+		'SlrTF_MJ', 'Rain_mm', and 'Strikes' must be zeroed every scan so old/stale measurements are not included multiple times in totals in stored output tables.
+		'Average, maximum, minimum, and other outputs will not be statistically impacted by the old/stale measurements of other ClimaVUE50 Compact Digital Weather Sensor measurements.
+		SlrTF_MJ=0
+		Rain_mm=0
+		Strikes=0
+		If TimeIntoInterval(0,10,Sec) Then
+			'Get data from ClimaVUE50 Compact Digital Weather Sensor
+			SDI12Recorder(CVData(),C1,"0","R7!",1,0,-1)
+			'Convert fractional relative humidity into percent relative humidity
+			RH=RH*100
+			'Calculate total solar flux in MJ/m^2 from flux density in W/m^2
+			'The multiplier to calculate total flux was calculated by Short Cut
+			'and based on a program execution rate (scan rate) of 5 Seconds.
+			'If you change the program execution rate outside of Short Cut with the CRBasic Editor
+			'you will need to recalculate this multiplier. See the sensor manual for more details.
+			SlrTF_MJ=SlrFD_W*5E-06
+			'Convert vapor pressure in kPa to mbar
+			VP_mbar=VP_mbar*10
+			'Convert barometric pressure in kPa to mbar
+			BP_mbar=BP_mbar*10
+			'High winds with rain can temporarily interfere with sonic wind measurements causing the sensor to output -9999 or -9990. The following instructions set invalid wind measurements
+			'to the previous valid wind measurements. This will 'flat-line' the measurements until the sensor is able to make good readings again. The Invalid_Wind variable will be set to 1 when
+			'a wind measurement is invalid. For troubleshooting purposes, it is highly recommended that you totalize the Invalid_Wind variable in any output tables you define that include
+			'wind speed and/or direction data from the ClimaVUE50.
+			If WS_ms<0 Then
+				WS_ms=WSPrev
+				WindDir=WindDirPrev
+				MaxWS_ms=MaxWSprev
+				Invalid_Wind=1
+			Else
+				WSPrev=WS_ms
+				WindDirPrev=WindDir
+				MaxWSprev=MaxWS_ms
+				Invalid_Wind=0
+			EndIf
+
+		EndIf
+
+		'Call Data Tables and Store Data
+
+		CallTable WeatherDataTable
+
+		' Start constructing the WeatherSBDstring with a placeholder for SystemDateTime
+		WeatherSBDstring = SystemDateTime & " W " ' Start with SystemDateTime
+
+		' Append weather data using the variables
+		WeatherSBDstring = WeatherSBDstring & WindDir & " " ' Wind Direction
+		WeatherSBDstring = WeatherSBDstring & WS_ms & " " ' Average Wind Speed
+		WeatherSBDstring = WeatherSBDstring & MaxWS_ms & " " ' Assuming Max Wind Speed is calculated elsewhere
+		WeatherSBDstring = WeatherSBDstring & Round(heading,2) & " " ' buoy heading from AquaDopp, HCB added this 09/20/2024
+		WeatherSBDstring = WeatherSBDstring & AirT_C & " " ' Average Temperature
+		WeatherSBDstring = WeatherSBDstring & (VP_mbar * 10) & " " ' Average Vapor Pressure, converted to mbar if necessary
+		WeatherSBDstring = WeatherSBDstring & (BP_mbar * 10) & " " ' Average Barometric Pressure, converted to mbar if necessary
+		WeatherSBDstring = WeatherSBDstring & Rain_mm & " " ' Total Rainfall
+		WeatherSBDstring = WeatherSBDstring & Strikes & " " ' Total Strikes (HCB added space in string output 09/20/2024)
+		WeatherSBDstring = WeatherSBDstring & SlrFD_W & " " ' Solar radiation (HCB added 09/20/2024)
+		WeatherSBDstring = WeatherSBDstring & RH & " " ' Relative humidity (HCB added 09/20/2024)
+		
+		' Assuming 'BattV' (Battery Voltage) and 'PTemp_C' (Panel Temperature) are still relevant and you want them appended
+		WeatherSBDstring = WeatherSBDstring & BattV & " " ' Battery Voltage (HCB removed leading space before BattV 09/20/2024)
+		WeatherSBDstring = WeatherSBDstring & PTemp_C ' Panel Temperature
+		
+'
+		If IfTime (120,900,sec) Then 'send weather data (HCB changed IfTime(30,900,sec) to IfTime(60,900,sec) 09/20/2024)
+			If EnableModem Then
+				SatModem_SendASCII(WeatherSBDstring)
+				'StringNumber = 1
+			EndIf
+
+			CallTable TransmissionTable
+
+		EndIf
+
+''
+		If SendWeather Then
+			SatModem_SendASCII(WeatherSBDstring)
+			StringNumber = 3
+			SendWeather = false
+		EndIf
+		
+
+
+
+SerialInRecord (COMU7,GPSstring,"&H4747",0,&H0D0A,NEMAcheck,01)
+
+  'GPSstring = ",2139.0146,S,3730.5340,E,194351,A*39" FOR TESTING
+   
+  SplitStr (GPSnumbers,GPSstring,"",3,0)                     'Split GLL string into number components
+  SplitStr (GPSletters,GPSstring,"",4,1)                     'Split GLL string into lettered componments
+    GPSlatraw = GPSnumbers(2)                     'First set of numbers is latitude 4927.57
+    GPSlatdeg = Left(GPSlatraw,2)                 'Take the degrees
+    GPSlatmin = Right(GPSlatraw,7)                'Take the minute decimal 27.57 as a float
+    GPSlatdec = (GPSlatmin/60)                    'Minutes decimal to decimal 27.57/60 = .4595
+    GPSlatitude = Round((GPSlatdeg + GPSlatdec),4)'49 + .4595 = 49.46 converted to string : changed to 4 on 25-Sep/23 SJP
+    If GPSletters(2) = ",S," Then                 'South will be denoted by a negative value
+      GPSlatitude = "-" + GPSlatitude
+    EndIf
+    GPSlongraw = GPSnumbers(3)                       'Second set is longitude 12327.14
+    GPSlonglength = Len(GPSnumbers(2))               'Number of bytes contained in longitude field
+    If GPSlonglength <= 8 '9                             'Figure out number of bytes to determine degree digits
+      GPSlongdeg = Left(GPSlongraw,2)                'If under 100, take two digits
+    Else
+      GPSlongdeg = Left(GPSlongraw,3)                'If more than 99, take three digits
+    EndIf
+    GPSlongmin = Right(GPSlongraw,7)                 'Take minute decimal 27.14 as float
+    GPSlongdec = (GPSlongmin/60)                     'Minutes decimal to decimal 27.14/60 = .4523
+    GPSlongitude = Round((GPSlongdeg + GPSlongdec),4)'123 + .4523 = 123.45 converted to string : changed to 4 on 25-Sep/23 SJP
+    If GPSletters (3) = ",W," Then                   'West is negative value
+      GPSlongitude = "-" + GPSlongitude
+    EndIf
+    GPStimeS = GPSnumbers(3)               'Third set of numbers is UTC time from GPS
+    GPStimeL = GPStimeS                    'String to Float conversion
+    fullstring =  GPSlatitude + "," + GPSlongitude
+    check = CheckSum(fullstring,10,0)       'Create a checksum from the created string
+    If GPSletters (4) = ",A,D*" Then       'Third set of letters is for GPS status,  A* is a fix
+      GPScheck = 1                         'Good GPS fix
+      SerialOut (COMU7,"$" + fullstring + "*" + Hex(check) + CHR(10) + CHR(13) ,"$GPGLL",0,0) 'Output the fullstring plus checksum and terminating characters
+    Else                      'V* is an error
+      GPScheck = 0            'bad/no GPS fix
+      SerialOut (COMU7,"$" + fullstring + "*" + Hex(check) + CHR(10) + CHR(13) ,"$GPGLL",0,0) 'Still output the string, even with the bad fix
+    EndIf
+CallTable GPSData 'Call Data Tables and Store Data
+
+
+    GPSSBDString = SystemDateTime & " " & "G" & " "
+    GPSSBDString = GPSSBDString & GPSlatitude & " "
+    GPSSBDString = GPSSBDString & GPSlongitude & " "
+    GPSSBDString = GPSSBDString & Round(Batt_volt,3)
+
+	If IfTime (0,900,sec) Then 'send GPS data (HCB changed IfTime(60,800,sec) to IfTime(0,900,sec) 09/20/2024
+			If EnableModem Then
+				SatModem_SendASCII(GPSSBDString)
+				'SatModem_SendASCII(WeatherSBDstring)
+				'StringNumber = 1
+			EndIf
+
+			CallTable TransmissionTable 'SJP uncommented this 19-Sep/24
+
+		EndIf
+
+		If SendGPS Then
+			SatModem_SendASCII(GPSSBDString)
+			'SatModem_SendASCII(WeatherSBDstring)
+			StringNumber = 3
+			SendGPS = false
+		EndIf
+
+
+
+
+
+
+
+
+
+   
+
+
+    If IfTime (240,900,sec) Then 'was 0,30min ' WAS 210, CHANGED 14-APR (HCB changed 0,900 to 120,900 09/20/2024)
+
+      SSDate=Status.TimeStamp(3,1)
+      SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+      TransmitPart1 = SystemDateTime&CHR(32)&"N"&CHR(32)&AquaDopp_OutString
+      'TransmitPart1 = SystemDateTime&CHR(32)&"S"&CHR(32)&AquaDopp_TableOutString
+      
+      For BinCount = 1 To 16 Step 1
+        TransmitPart1 = TransmitPart1&CHR(32)&Bin_AvgStr(BinCount)
+      Next BinCount
+
+      TransmitPart2 = SystemDateTime
+      For BinCount = 17 To 32 Step 1 'CHANGED TO 31 FROM 32 14-APR/21, HCB changed back to 32 24-Sep/2024   
+        TransmitPart2 =TransmitPart2&CHR(32)&Bin_AvgStr(BinCount)
+      Next BinCount
+      'TransmitPart2 =TransmitPart2&CHR(32)& Round(Batt_volt,1)
+      SendFile1 = TransmitPart1
+      SendFile2 = TransmitPart2
+      If EnableModem Then
+        '        SendFile1temp = "Transmission test String1" &CHR(32)&SystemDateTim'e
+        SatModem_SendASCII(SendFile1)
+        StringNumber = 1
+      EndIf
+      CallTable TransmissionTable
+    EndIf
+
+    If IfTime (360,900,sec)  Then ' was 2,30min, changed to 3.5min 25Feb21 (HCB changed 80,900 to 180,900 09/20/2024)
+      If EnableModem Then
+        SendFile2Now = true
+      EndIf
+    EndIf
+    'first check the MO_flag to see if msg in queue. 0 = no, 1 = yes
+    If SBDS_MOFlag = 0 AND SendFile2Now Then
+      ' SendFile2temp = "Transmission test String2"  &CHR(32)&SystemDateTime'
+      SatModem_SendASCII(SendFile2)
+      StringNumber = 2
+      SendFile2Now = false
+         CallTable TransmissionTable
+    EndIf
+    
+'-------------ADDED 11-Apr/21 to send additional string of Error Velocities for each bin
+    If IfTime (480,900,sec)  Then ' send error velocities (HCB changed 60,900 to 240,900 09/20/2024)
+      If EnableModem Then
+        SendFileEVNow = true
+      EndIf
+    EndIf
+    'first check the MO_flag to see if msg in queue. 0 = no, 1 = yes
+    If SBDS_MOFlag = 0 AND SendFileEVNow Then
+      SatModem_SendASCII(ErrorVelocityStr) 'uncomment 3 lines /when EV file ready
+     StringNumber = 4
+      SendFileEVNow = false
+   CallTable TransmissionTable
+    EndIf
+
+
+'    If IfTime (760,1800,sec)  Then ' was 2,30min, changed to 3.5min 25Feb21
+'      If EnableModem Then
+'        SendBTnow = true
+'      EndIf
+'    EndIf
+'    'first check the MO_flag to see if msg in queue. 0 = no, 1 = yes
+'    If SBDS_MOFlag = 0 AND SendBTnow Then
+'      ' SendFile2temp = "Transmission test String2"  &CHR(32)&SystemDateTime'
+'      SatModem_SendASCII(BottomTransmit)
+'      StringNumber = 5
+'      SendBTnow = false
+'         CallTable TransmissionTable
+'    EndIf
+
+
+
+    If SendNow Then
+      SSDate=Status.TimeStamp(3,1)
+      SystemDateTime = LTrim(Left(SSDate,2)&Mid (SSDate,4,2)&Mid (SSDate,12,2)&Mid (SSDate,15,2))
+      TransmitPart1 = SystemDateTime&CHR(32)&"N"&CHR(32)&AquaDopp_OutString
+      'TransmitPart1 = SystemDateTime&CHR(32)&"S"&CHR(32)&AquaDopp_TableOutString
+      For BinCount = 1 To 16 Step 1
+        TransmitPart1 = TransmitPart1&CHR(32)&Bin_AvgStr(BinCount)
+      Next BinCount
+
+      TransmitPart2 = SystemDateTime
+      For BinCount = 17 To 32 Step 1
+        TransmitPart2 =TransmitPart2&CHR(32)&Bin_AvgStr(BinCount)
+      Next BinCount
+      SendFile1 = TransmitPart1
+      SendFile2 = TransmitPart2
+      If EnableModem Then
+        SendFile1temp = "now Test String1" & CHR(32) & SystemDateTime
+        SatModem_SendASCII(SendFile1)
+        StringNumber = 1
+      EndIf
+      CallTable TransmissionTable
+
+      Delay (0,120,Sec)
+      ' Do While SBDIX_MT_status = 1
+      ' SendFile2temp =  "now Test String2" & CHR(32) & SystemDateTime
+      SatModem_SendASCII(SendFile2)
+      StringNumber = 2
+      SendNow = false
+    EndIf
+
+
+    If IfTime (28,30,Min) Then
+      SatModem_SignalQuality()
+      CallTable SatSignal
+    EndIf
+
+    If CheckSignal Then
+      SatModem_SignalQuality()
+      CallTable SatSignal
+      CheckSignal = false
+    EndIf
+
+    If GetModemInfo Then
+      Send_ATcommand("AT+CGMM")
+      SplitStr (SatModem_ID,serialInput, CRLF, 1, 6)
+      SatModem_GetIMEI()
+      SatModem_SignalQuality()
+      SatModem_firmwareVersion()
+      CallTable ModemInfo
+      CallTable SatSignal
+      GetModemInfo = false
+    EndIf
+
+    If EnableModem Then
+      SatModem_status() 'Check status
+      If SBDS_MOFlag = 1 Then 'Check if data is ready to be sent
+        If SatModem_SBDsession() 'Initiate SBD Session, send, & check for in message
+          CallTable SatModem_outbox
+          CallTable SBD_Transmissions
+          SatModem_clrMObuffer() 'Clear MO buffer after massage is sent
+
+          Do While SBDIX_MT_status = 1 'Message in inbox
+            SatModem_receive() 'Receive message from inbox
+            If SBDIX_MT_queued > 0 'Message in queue
+              SatModem_SBDsession() 'Check for next massage
+            Else
+              ExitDo 'No massages left in queue
+            EndIf
+          Loop
+        EndIf
+      EndIf
+    EndIf
+
+  NextScan
+  
+  
+	
+
+
+
+EndProg
+
+   r             
+
