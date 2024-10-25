@@ -1,4 +1,4 @@
-# Spill-Response-Sciecne-Buoy
+# Spill-Response-Science-Buoy
 Iridium Environmental Monitoring Buoy
 
 This buoy was desined with the purpose of monitoring environmental conditions around an oil spill. It has the ability to measure weather and surface/subsurface currents to aid in the safe recovery of environmental contaminants.
